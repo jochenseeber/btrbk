@@ -77,6 +77,7 @@ my %config_options = (
   ssh_user                  => { default => "root",   accept_regexp => qr/^[a-z_][a-z0-9_-]*$/ },
   ssh_port                  => { default => "default", accept => [ "default" ], accept_numeric => 1 },
   btrfs_progs_compat        => { default => undef,    accept => [ "yes", "no" ] },
+  remote_niceness           => { default => undef,    accept_numeric => 1 },
 
   # deprecated options
   snapshot_create_always    => { default => undef, accept => [ "yes", "no" ],
@@ -174,7 +175,8 @@ sub run_cmd(@)
   my $filter_stderr = undef;
   foreach (@commands) {
     $_->{rsh} //= [];
-    $_->{cmd} = [ @{$_->{rsh}}, @{$_->{cmd}} ];
+    $_->{nice} //= [];
+    $_->{cmd} = [ @{$_->{rsh}}, @{$_->{nice}}, @{$_->{cmd}} ];
     $_->{cmd_text} = join(' ', map { s/\n/\\n/g; "'$_'" } @{$_->{cmd}});  # ugly escape of \n, do we need to escape others?
     $name = $_->{name} // $_->{cmd_text};
     $_->{_buf} = '';
@@ -252,6 +254,9 @@ sub vinfo($$)
       SSH_PORT     => $ssh_port,
       RSH          => ['/usr/bin/ssh', @ssh_options, $ssh_user . '@' . $host ],
      );
+
+    my $remote_niceness = config_key($config, "remote_niceness");
+    $info{NICE} = ["nice", "-n", $remote_niceness] if($remote_niceness);
   }
   elsif(($url =~ /^\//) && ($url =~ /^$file_match$/)) {
     %info = (
@@ -292,7 +297,8 @@ sub vinfo_child($$)
                SSH_IDENTITY
                SSH_PORT
                RSH
-               BTRFS_PROGS_COMPAT ) )
+               BTRFS_PROGS_COMPAT
+               NICE ) )
   {
     $info{$_} = $parent->{$_} if(exists $parent->{$_});
   }
@@ -911,11 +917,13 @@ sub btrfs_send_receive($$$)
   my $parent = shift;
   my $snapshot_path = $snapshot->{PATH} // die;
   my $snapshot_rsh  = $snapshot->{RSH};
+  my $snapshot_nice = $snapshot->{NICE};
   my $target_path = $target->{PATH} // die;
   my $target_rsh  = $target->{RSH};
+  my $target_nice = $target->{NICE};
   my $parent_path = $parent ? $parent->{PATH} : undef;
 
-   my $snapshot_name = $snapshot_path;
+  my $snapshot_name = $snapshot_path;
    $snapshot_name =~ s/^.*\///;
   INFO ">>> $target->{PRINT}/$snapshot_name";
   print STDOUT "Receiving subvol: $target->{PRINT}/$snapshot_name\n" if($show_progress && (not $dryrun));
@@ -935,6 +943,7 @@ sub btrfs_send_receive($$$)
   push @cmd_pipe, {
     cmd => [ qw(btrfs send), @send_options, $snapshot_path ],
     rsh => $snapshot_rsh,
+    nice => $snapshot_nice,
     name => "btrfs send",
   };
   push @cmd_pipe, {
@@ -943,6 +952,7 @@ sub btrfs_send_receive($$$)
   push @cmd_pipe, {
     cmd => [ qw(btrfs receive), @receive_options, $target_path . '/' ],
     rsh => $target_rsh,
+    nice => $target_nice,
     name => "btrfs receive",
   };
   my $ret = run_cmd(@cmd_pipe);

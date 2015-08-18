@@ -30,7 +30,11 @@ run_cmd()
     $SSH_ORIGINAL_COMMAND
 }
 
-case "$SSH_ORIGINAL_COMMAND" in
+CHECK_COMMAND=$SSH_ORIGINAL_COMMAND
+CHECK_COMMAND=${CHECK_COMMAND#nice -n [0-9][0-9] }
+CHECK_COMMAND=${CHECK_COMMAND#nice -n [0-9] }
+
+case "$CHECK_COMMAND" in
     *\$*) reject_and_die ;;
     *\&*) reject_and_die ;;
     *\(*) reject_and_die ;;
